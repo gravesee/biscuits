@@ -1,6 +1,5 @@
 import numpy as np
 from typing import Optional, Tuple
-from bnh import Bin
 
 def tabulate(
     x: np.ndarray,
@@ -15,4 +14,4 @@ def tabulate(
     ux = uniq[..., np.newaxis] # needed for broadcasting
     cnts = np.array(tuple(((x == ux)[:,y == v]).dot(w[y == v]) for v in [0,1])).T
 
-    return (uniq, cnts)
+    return uniq, cnts

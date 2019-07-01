@@ -1,21 +1,21 @@
-from bnh import Bin
-from typing import Tuple
+from __future__ import annotations
+from typing import Tuple, Type
 from abc import ABC, abstractmethod
 import numpy as np
+from bnh.bin import Bin, BinaryBin
 
 
 class Metric(ABC):
-
     def __init__(self):
         super().__init__()
 
-    @abstractmethod
     @staticmethod
-    def evaluate(bin: Bin) -> np.ndarray:
+    @abstractmethod
+    def evaluate(bin: Type[Bin]) -> np.ndarray:
         pass
     
-    @abstractmethod
     @staticmethod
+    @abstractmethod
     def best_index(values: np.ndarray) -> int:
         pass
 
@@ -24,7 +24,7 @@ class IV(Metric):
     """Vectorized information value"""
 
     @staticmethod
-    def evaluate(bin) -> np.ndarray:        
+    def evaluate(bin: BinaryBin) -> np.ndarray:        
         tots = bin.cnts.sum(axis=0)
         cnta = bin.cnts.cumsum(axis=0)
         cntb = tots - cnta
