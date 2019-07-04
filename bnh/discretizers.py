@@ -1,58 +1,101 @@
 import numpy as np
 from abc import abstractmethod, ABC
-from typing import Optional, Tuple
-from bnh.tabulate import tabulate
+from typing import Optional, Tuple, Type, List
+import pandas as pd
+from bnh.perf import Performance, BinaryPerformance
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.datasets import load_breast_cancer
 
-class DiscretizerMixin(ABC):
-    
+class Discretizer(ABC):
     @abstractmethod
-    def __init__(
-        self, 
-        x: np.ndarray,
-        y: np.ndarray,
-        w: Optional[np.ndarray]):
-        self.uniq = np.unique(x)
-        super().__init__()
-    
-    @abstractmethod
-    def evaluate(self):
+    def discretize(self, x: pd.Series, perf: Type[Performance], *args, **kwargs) -> List[float]:
         pass
+
+class DiscretizerFactory():
+    """Class that takes an input variable and perf object and returns a set of cuts"""
+
+    def __init__(self):
+        self._discretizers = {}
+
+    def register_discretizer(self, perf: str, discretizer: Type[Discretizer]):
+        self._discretizers[perf] = discretizer
     
+    def get_discretizer(self, perf: str):
+        discretizer = self._discretizers.get(perf)
+        if not perf:
+            raise ValueError(perf)
+        return discretizer()
+
+class DecisionTreeDiscretizer(ABC):
+
     @abstractmethod
-    def best_index(self, values: np.ndarray):
-        pass
+    def __init__(self, clf):
+        self.clf = clf
     
-    ## TODO:: Pick up here.. should return split value 
-    def best_split(self) -> Tuple[int, float]:
-        values = self.evaluate()
-        i = self.best_index(values)
-        return i, values[i]
-    
+    def discretize(self, x: pd.Series, perf: Type[Performance], *args, **params):
+        clf = self.clf
+        clf.set_params(**params)
 
-class IVDiscretizerMixin(DiscretizerMixin):
-    
-    def __init__(self, x, y, w: Optional[np.ndarray] = None):
-        uniq, cnts = tabulate(x, y, w)
-        self.uniq = uniq
-        self.cnts = cnts
+        y, w = perf.values
+        clf.fit(x.values.reshape(-1, 1), y, sample_weight=w)
 
-    def evaluate(self) -> np.ndarray:        
-        tots = self.cnts.sum(axis=0)
-        cnta = self.cnts.cumsum(axis=0)
-        cntb = tots - cnta
+        tree = clf.tree_
+        res = [v for v, x in zip(tree.threshold, tree.feature) if x != -2]
         
-        pcta = cnta/tots
-        pctb = cntb/tots
+        ## add -np.Inf and np.inf
+        res.insert(0, -np.inf)
+        res.append(np.inf)
+        res.sort()
+        return res
 
-        iva = (pcta[:,1] - pcta[:,0]) * np.log(pcta[:,1] / pcta[:,0])
-        ivb = (pctb[:,1] - pctb[:,0]) * np.log(pctb[:,1] / pctb[:,0])
+class DecisionTreeClassifierDiscretizer(DecisionTreeDiscretizer, Discretizer):
 
-        ivs = iva + ivb
-        
-        return ivs
+    def __init__(self):
+        self.clf = DecisionTreeClassifier()
+
+class DecisionTreeRegressorDiscretizer(DecisionTreeDiscretizer, Discretizer):
+
+    def __init__(self):
+        self.clf = DecisionTreeRegressor()
+
+
+factory = DiscretizerFactory()
+factory.register_discretizer('BinaryPerformance', DecisionTreeClassifierDiscretizer)
+factory.register_discretizer('ContinuousPerformance', DecisionTreeRegressorDiscretizer)
+
+def discretize(x, perf, discretizer=None, **params):
+    if discretizer is None:
+        discretizer = type(perf).__name__
+    disc = factory.get_discretizer(discretizer)
+    return disc.discretize(x, perf, **params)
+
+
+if __name__ == "__main__":
     
-    def best_index(self, values: np.ndarray) -> int:
-        return np.argmax(values)
+    data = load_breast_cancer()
+    #x = pd.DataFrame(data.data[:,0])
+    #y = pd.Series(data.target)
+    #perf = BinaryPerformance(y)
     
-        
+    # cuts = discretize(x, perf, min_samples_leaf=5, max_leaf_nodes=5)
 
+    X = data.data
+    Y = data.target
+    for i in range(10):
+        X = np.concatenate([X, X], axis=0)
+        Y = np.concatenate([Y, Y], axis=0)
+    perf = BinaryPerformance(pd.Series(Y))
+    
+    
+    cuts = pd.DataFrame(X).apply(discretize, perf=perf, min_samples_leaf=5, max_leaf_nodes=5)
+
+
+
+
+    # DecisionTreeClassifier()
+
+    cat = pd.cut(X[:,1], cuts[1])
+    res = perf.summarize(cat)
+
+    # pd.value_counts(pd.cut(x, cuts))
+        

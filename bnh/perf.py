@@ -1,25 +1,48 @@
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
+from typing import Tuple
 from sklearn.datasets import load_breast_cancer
 
-class BasePerformance(ABC):
+class Performance(ABC):
 
     @abstractmethod
     def __init__(self, y: pd.Series, w: pd.Series = None):
         if w is None:
             w = np.ones(len(y))
-        self.data = pd.DataFrame({'y': y, 'w': w})
+        self.y = y
+        self.w = w
         
+    @property
+    def values(self) -> Tuple[pd.Series, pd.Series]:
+        return (self.y, self.w)
+    
+    @property
+    def data(self) -> pd.DataFrame:
+        return pd.DataFrame({'y': self.y, 'w': self.w})
+    
+    def get_data(self, y: pd.Series = None, w: pd.Series = None) -> pd.DataFrame:
+        # pass in a new y
+        if y is not None:
+            if w is None:
+                w = np.ones(len(y))
+            else:
+                assert(len(y) == len(w))
+        # use the existing y, w values
+        else:
+            y, w = self.values
+
+        return pd.DataFrame({'y': y, 'w': w})
+
     @abstractmethod
     def summarize(self, x: pd.Categorical):
         pass
-
+        
     @abstractmethod
     def plot(self, x: pd.Categorical):
         pass
 
-class BinaryPerformance(BasePerformance):
+class BinaryPerformance(Performance):
 
     def __init__(self, y: pd.Series, w: pd.Series = None):
         assert(y.isin([0,1]).all())
@@ -36,13 +59,9 @@ class BinaryPerformance(BasePerformance):
         return res
     
     def summarize(self, x: pd.Categorical, y=None, w=None):
-        if y is not None:
-            if w is None:
-                w = np.ones(len(y))
-            data = pd.DataFrame({'y': y, 'w': w})
-        else:
-            data = self.data
 
+        data = self.get_data(y, w)
+        assert(data.shape[0] == len(x))
 
         grps = data.groupby(x)
         aggd = list()
