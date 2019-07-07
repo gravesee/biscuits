@@ -60,6 +60,7 @@ class BinaryPerformance(Performance):
     
     def summarize(self, x: pd.Categorical, y=None, w=None):
 
+        # TODO: put generalizable stuff in the base class
         data = self.get_data(y, w)
         assert(data.shape[0] == len(x))
 
@@ -68,7 +69,10 @@ class BinaryPerformance(Performance):
         for _, grp in grps:
             aggd.append(self._aggfun(grp))
         
-        res = pd.DataFrame(aggd, index=x.categories)
+        ## append NaN group
+        aggd.append(self._aggfun(data[x.isna()]))
+        
+        res = pd.DataFrame(aggd, index=list(x.cat.categories) + ['Missing'])
         res = pd.concat([res, res.agg(['sum'])])
         res.rename(index={'sum':'Total'}, inplace=True)
 
@@ -92,9 +96,10 @@ if __name__ == "__main__":
     p = BinaryPerformance(pd.Series(d.target))
 
     cuts = [-np.inf, 13.0, 13.7, 15.0, 16.9, np.inf]
-    z = pd.cut(data.data[:,0], cuts)
+    z = pd.Series(pd.cut(data.data[:,0], cuts))
 
     p.summarize(z)
+
 
 # from scipy.sparse import csc_matrix
 

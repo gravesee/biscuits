@@ -5,10 +5,8 @@ import pandas as pd
 from scipy.sparse import csc_matrix
 import numpy as np
 from itertools import chain
-
-# TODO: move to util
-def between(x: int, bounds: Tuple[int, int]) -> bool:
-    return bounds[0] <= x <= bounds[1]
+from perf import BinaryPerformance
+from util import between
 
 
 class Bin(ABC):
@@ -16,9 +14,9 @@ class Bin(ABC):
     def transform(self, x: pd.Series, type='categorical'):
         
         if type is 'categorical':
-            self._to_categorical(x)
+            return self._to_categorical(x)
         elif type is 'sparse':
-            self._to_sparse(x)
+            return self._to_sparse(x)
         else:
             ValueError("type must be in ['categorical', 'sparse']")
 
@@ -45,9 +43,9 @@ class Bin(ABC):
         return csc_matrix((data, (rows, cols)), shape=(len(x), ncat + 1))
 
     @abstractmethod
-    def expand(self, i: int):
+    def expand(self, i: int, values: List[float]):
         pass
-
+        
 class BinCategorical(Bin):
     
     def __init__(self, categories: List[str]):
@@ -77,25 +75,30 @@ class BinCategorical(Bin):
         for k in keys:
             self.map[k] = keys
     
-    def expand(self, idx: int):
+    def expand(self, i: int, values: List[float] = None):
         lvls = self.levels
-        if not between(idx, (0, len(lvls))):
+        if not between(i, (0, len(lvls))):
             return
         
         for k, v in self.map.items():
-            if ','.join(v) == lvls[idx]:
+            if ','.join(v) == lvls[i]:
                 self.map[k] = [k]
             
 
-
 class BinContinuous(Bin):
 
+    @staticmethod
+    def __pad_inf(x: List[float]) -> List[float]:
+        """Make list unique and bookend with inf"""
+        x.insert(0, -np.inf)
+        x.append(np.inf)
+        x = sorted(list(set(x)))
+        return x
+
     def __init__(self, cuts: List[float], exceptions: List[float] = []):
-        cuts = sorted(list(set(cuts)))
-        cuts.insert(0, -np.inf)
-        cuts.append(np.inf)
-        self.cuts = cuts
+        self.cuts = self.__pad_inf(cuts)
         self.exceptions = exceptions
+
     
     def _to_categorical(self, x: pd.Series) -> pd.Categorical:
         res = pd.cut(x, self.cuts)
@@ -106,25 +109,38 @@ class BinContinuous(Bin):
         return res
     
     def collapse(self, idx: Tuple[int, int]):
-        cuts = self.cuts
-        cuts = [x for j, x in enumerate(cuts) if not between(j, idx)]
+        cuts = [x for j, x in enumerate(self.cuts) if not between(j, idx)]
+        self.cuts = self.__pad_inf(cuts)
     
-    def expand(self, idx: int):
-        pass
+    def expand(self, i: int, values: List[float] = []):
+        cuts = self.cuts.copy()
+        cuts[i:i] = values
+        self.cuts = self.__pad_inf(cuts)
 
 
 if __name__ == "__main__":
-    x = pd.Series([-1,-2,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3, np.nan])
-    b = BinContinuous([1.], exceptions=[-1,-2])
+
+    x = np.floor(np.random.random_sample(1_000_000) * 10)
+    x = pd.Series(x)
+
+    # x = pd.Series([-1,-2,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3, np.nan])
+    b = BinContinuous([3.,7.], exceptions=[0,1])
+    b.expand(0, [1.])
     
     res1 = b._to_categorical(x)
     b._to_sparse(x)
 
-    y = pd.Series(['a','b','c','d','a','b','c','d','e'])
-    bc = BinCategorical(['a','b','c','d'])
+    y = x.astype(str)
+    bc = BinCategorical(y.unique())
 
     bc.collapse([1,3])
     res2 = bc._to_categorical(y)
-    type(res2)
     bc._to_sparse(y)
+
+    y = pd.Series(np.floor(np.random.random_sample(1_000_000) * 2))
+    perf = BinaryPerformance(y)
+
+    b.collapse((0,2))
+    perf.summarize(x=b._to_categorical(x))
+
 
