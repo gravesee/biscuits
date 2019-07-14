@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Tuple, Type
 from abc import ABC, abstractmethod
 import numpy as np
-from bnh.bin import Bin, BinaryBin
+from .bin import Bin, BinaryBin
 
 
 class Metric(ABC):

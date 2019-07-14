@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Tuple
-from sklearn.datasets import load_breast_cancer
+from typing import Tuple, List
+from functools import reduce
 
 class Performance(ABC):
 
@@ -35,21 +35,110 @@ class Performance(ABC):
         return pd.DataFrame({'y': y, 'w': w})
 
     @abstractmethod
-    def summarize(self, x: pd.Categorical):
+    def _aggregate(self, df: pd.DataFrame) -> pd.DataFrame:
+        """ Return summary for perf on group from df.groupby..."""
         pass
+
+    def summarize(self, x: pd.Categorical, y = None, w = None) -> pd.DataFrame:
+        data = self.get_data(y, w)
+        assert(data.shape[0] == len(x))
+
+        grps = data.groupby(x)
+        aggd = list()
+        for _, grp in grps:
+            aggd.append(self._aggregate(grp))
+        
+        ## append NaN group
+        aggd.append(self._aggregate(data[x.isna()]))
+        res = pd.DataFrame(aggd, index=list(x.cat.categories) + ['Missing'])
+
+        return res
         
     @abstractmethod
     def plot(self, x: pd.Categorical):
         pass
 
+
+class MulticlassPerformance(Performance):
+
+    cols: List[str] = ['N', 'PctN']
+    funs: dict = {'Sum': 'sum', 'Pct': lambda y, N: len(y)/N}
+
+    def __init__(self, y: pd.Series, w: pd.Series = None):
+        assert(np.issubdtype(y.dtype, np.int64))
+        super().__init__(y, w)
+        
+    def _aggregate(self, df: pd.DataFrame):
+        dicts: List[dict] = []
+        N = df.shape[0]
+        for name, f in self.funs.items():
+            res: dict = df.groupby('y')['w'].agg(f, N=N).T.to_dict()
+            res = {f"{name}:\n {k}": v for k, v in res.items()}
+            dicts.append(res)
+        
+        res = reduce(lambda x, y: dict(x, **y), dicts, {'N': N})
+        return res
+    
+    def _fix_cols(self, keep):
+        for k in self.cols:
+            keep.remove(k)
+        return self.cols + keep
+    
+    def summarize(self, x: pd.Categorical, y=None, w=None):
+        res: pd.DataFrame = super().summarize(x, y, w)
+
+        # create the toal row
+        tot = pd.DataFrame(self._aggregate(self.get_data(y, w)), index=['Total'])
+        out: pd.DataFrame = pd.concat([res, tot], sort=False)
+        out['PctN'] = out['N'] / len(x)
+        
+        return out.reindex(columns=self._fix_cols(list(out.keys())))
+    
+    def plot(self):
+        pass
+    
+
+
+class ContinuousPerformance(Performance):
+
+    cols: List[str] = ['N', 'Sum', 'Mean', 'Var']
+    
+    def __init__(self, y: pd.Series, w: pd.Series = None):
+        super().__init__(y, w)
+    
+    def _aggregate(self, df: pd.DataFrame):
+        wy = df['w'] * df['y']
+        res = {
+            'N': df.shape[0],
+            'Sum':  wy.sum(),
+            'Mean': wy.mean(),
+            'Var':  wy.var()
+        }
+        return res
+    
+    def summarize(self, x: pd.Categorical, y=None, w=None):
+        res: pd.DataFrame = super().summarize(x, y, w)
+        
+        # create the toal row
+        tot = pd.DataFrame(self._aggregate(self.get_data(y, w)), index=['Total'])
+        out: pd.DataFrame = pd.concat([res, tot], sort=False)
+        
+        return out.reindex(columns=self.cols)
+    
+    def plot(self):
+        pass
+
+
+
 class BinaryPerformance(Performance):
+
+    cols: List[str] = ['N', '1s', '0s', 'Rate', 'Pct1', 'Pct0', 'WoE']
 
     def __init__(self, y: pd.Series, w: pd.Series = None):
         assert(y.isin([0,1]).all())
         super().__init__(y, w)
 
-    def _aggfun(self, df: pd.DataFrame):
-
+    def _aggregate(self, df: pd.DataFrame):
         res = {
             'N': df.shape[0],
             '1s': (df['w'][df['y'] == 1]).sum(),
@@ -60,19 +149,9 @@ class BinaryPerformance(Performance):
     
     def summarize(self, x: pd.Categorical, y=None, w=None):
 
-        # TODO: put generalizable stuff in the base class
-        data = self.get_data(y, w)
-        assert(data.shape[0] == len(x))
-
-        grps = data.groupby(x)
-        aggd = list()
-        for _, grp in grps:
-            aggd.append(self._aggfun(grp))
+        res: pd.DataFrame = super().summarize(x, y, w)
         
-        ## append NaN group
-        aggd.append(self._aggfun(data[x.isna()]))
-        
-        res = pd.DataFrame(aggd, index=list(x.cat.categories) + ['Missing'])
+        # create the toal row
         res = pd.concat([res, res.agg(['sum'])])
         res.rename(index={'sum':'Total'}, inplace=True)
 
@@ -81,8 +160,7 @@ class BinaryPerformance(Performance):
         res['Pct0'] = res['0s'] / res.loc['Total','0s']
         res['WoE'] = np.log(res['Pct1'] / res['Pct0'])
 
-        return res
-
+        return res.reindex(columns=self.cols)
     
     def plot(self, x):
         pass
@@ -90,13 +168,15 @@ class BinaryPerformance(Performance):
 
 if __name__ == "__main__":
 
-    data = load_breast_cancer()
+    from sklearn.datasets import load_iris
 
-    d = load_breast_cancer()
-    p = BinaryPerformance(pd.Series(d.target))
 
-    cuts = [-np.inf, 13.0, 13.7, 15.0, 16.9, np.inf]
-    z = pd.Series(pd.cut(data.data[:,0], cuts))
+    d = load_iris()
+    data = pd.DataFrame(d.data)
+    p = MulticlassPerformance(pd.Series(d.target))
+
+    cuts = [-np.inf, 5, 6, 7, np.inf]
+    z = pd.Series(pd.cut(d.data[:,0], cuts))
 
     p.summarize(z)
 
